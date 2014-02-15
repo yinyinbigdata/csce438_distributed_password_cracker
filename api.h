@@ -15,6 +15,7 @@
 #include <stdbool.h>
 #include <protobuf-c/protobuf-c.h>
 #include <string.h>
+#include <signal.h>
 
 #include "lsp.pb-c.h"
 #include "list.h"
@@ -72,6 +73,10 @@ struct lsp_conn_desc {
     uint32_t lcd_seqnum;
     uint32_t lcd_ack_seqnum;
     struct sockaddr_in lcd_client_addr;
+    int32_t lcd_epoch_pass_num;
+    int32_t lcd_epoch_recv_flag; // 1 mean receive, 0 not receive
+    uint8_t lcd_last_buf[MAXDATASIZE];
+    int lcd_last_buf_len;
 };
 
 typedef struct lsp_server_s {

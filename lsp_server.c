@@ -2,6 +2,71 @@
 #define LSP_SERVER_C
 
 #include "api.h"
+
+lsp_server* global_server;
+
+// Setting LSP Parameters
+double epoch_lth = 2;
+double epoch_cnt = 5;
+
+struct itimerval timer_server;
+
+void lsp_server_resend_lastmsgbuf(lsp_server* a_srv, struct lsp_conn_desc* conn);
+
+static void server_sig_timer(int i) {
+    DEBUG("server_sig_timer:");
+    struct lsp_conn_desc* conn;
+    list_for_each_entry(conn, &global_server->ls_lcd_list, lcd_list) {
+        if (conn->lcd_epoch_recv_flag) {
+            conn->lcd_epoch_pass_num = 0;
+        } else {
+            conn->lcd_epoch_pass_num++;
+        }
+        DEBUG("server_sig_timer: connid %d epoch_pass_num %d", conn->lcd_connid, conn->lcd_epoch_pass_num);
+        // time out
+        if (conn->lcd_epoch_pass_num > epoch_cnt) {
+            DEBUG("server_sig_timer: epoch pass num > epoch_cnt, resend");
+            lsp_server_resend_lastmsgbuf(global_server, conn);
+            conn->lcd_epoch_pass_num = 0;
+        }
+    }
+}
+
+// Set length of epoch (in seconds)
+void lsp_set_epoch_lth(double lth) {
+    epoch_lth = lth;
+    memset(&timer_server, 0, sizeof(struct itimerval));
+    timer_server.it_interval.tv_sec = epoch_lth;
+    timer_server.it_value.tv_sec = epoch_lth;
+    //signal(SIGALRM, server_sig_timer);
+    setitimer(ITIMER_REAL, &timer_server, NULL);
+}
+
+// Set number of epochs before timing out
+void lsp_set_epoch_cnt(int cnt) {
+    epoch_cnt = cnt;
+}
+
+bool lsp_server_store_lastmsgbuf(struct lsp_conn_desc* conn, uint8_t* buf, int len) {
+    memcpy(conn->lcd_last_buf, buf, len);
+    conn->lcd_last_buf_len = len;
+}
+
+void lsp_server_resend_lastmsgbuf(lsp_server* a_srv, struct lsp_conn_desc* conn) {
+    uint8_t* buf;
+    int len;
+    int addr_len = sizeof(struct sockaddr);
+    int ret;
+    
+    buf = conn->lcd_last_buf;
+    len = conn->lcd_last_buf_len;
+    
+    ret = sendto(a_srv->ls_socket, buf, len, 0, (struct sockaddr*)&conn->lcd_client_addr, addr_len);
+    if (ret < 0) {
+        DEBUG("lsp_server_resend_lastmsgbuf: sendto failed");
+    }
+}
+
 // Server API
 
 lsp_server* lsp_server_create(int port) {
@@ -34,6 +99,16 @@ lsp_server* lsp_server_create(int port) {
         free(server); 
         server = NULL;
     }
+    
+    // set server sig timer
+    DEBUG("lsp_server_create: set sig timer");
+    memset(&timer_server, 0, sizeof(struct itimerval));
+    timer_server.it_interval.tv_sec = epoch_lth;
+    timer_server.it_value.tv_sec = epoch_lth;
+    signal(SIGALRM, server_sig_timer);
+    setitimer(ITIMER_REAL, &timer_server, NULL);
+    
+    global_server = server;
     
     return server;
 }
@@ -165,6 +240,9 @@ int lsp_server_read(lsp_server* a_srv, void* pld, uint32_t* conn_id) {
         DEBUG("lsp_server_read: ack other unkown, msg seqnum %d, conn seqnum %d, conn ack_seqnum %d\n", 
                 msg->seqnum, conn->lcd_seqnum, conn->lcd_ack_seqnum);
     }
+    
+    // update epoch pass
+    conn->lcd_epoch_recv_flag = 1;
 
 out:
     return len;
@@ -204,6 +282,7 @@ bool lsp_server_write(lsp_server* a_srv, void* pld, int lth, uint32_t conn_id) {
     lspmessage__pack(&msg, buf);
     
     DEBUG("lsp_server_write: send msg connid %d seqnum %d buf: %s\n", msg.connid, msg.seqnum, pld);
+    lsp_server_store_lastmsgbuf(conn, buf, len);
     sendto(a_srv->ls_socket, buf, len, 0, (struct sockaddr*)&conn->lcd_client_addr, sizeof(struct sockaddr));
     
     return true;
@@ -215,13 +294,7 @@ bool lsp_server_close(lsp_server* a_srv, uint32_t conn_id) {
 }
 
 
-// Setting LSP Parameters
 
-// Set length of epoch (in seconds)
-void lsp_set_epoch_lth(double lth);
-
-// Set number of epochs before timing out
-void lsp_set_epoch_cnt(int cnt);
 
 // Set fraction of packets that get dropped along each connection
 void lsp_set_drop_rate(double rate);
