@@ -44,6 +44,8 @@ typedef struct lsp_client_s {
     uint32_t lc_ack_seqnum;
     uint8_t lc_last_buf[MAXDATASIZE];
     int lc_last_buf_len;
+    int lc_epoch_pass_num;
+    int lc_epoch_recv_flag;
 } lsp_client;
 
 typedef struct lsp_packet_s {

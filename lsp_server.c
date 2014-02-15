@@ -19,6 +19,7 @@ static void server_sig_timer(int i) {
     list_for_each_entry(conn, &global_server->ls_lcd_list, lcd_list) {
         if (conn->lcd_epoch_recv_flag) {
             conn->lcd_epoch_pass_num = 0;
+            conn->lcd_epoch_recv_flag = 0;
         } else {
             conn->lcd_epoch_pass_num++;
         }
@@ -33,7 +34,7 @@ static void server_sig_timer(int i) {
 }
 
 // Set length of epoch (in seconds)
-void lsp_set_epoch_lth(double lth) {
+void lsp_server_set_epoch_lth(double lth) {
     epoch_lth = lth;
     memset(&timer_server, 0, sizeof(struct itimerval));
     timer_server.it_interval.tv_sec = epoch_lth;
@@ -43,7 +44,7 @@ void lsp_set_epoch_lth(double lth) {
 }
 
 // Set number of epochs before timing out
-void lsp_set_epoch_cnt(int cnt) {
+void lsp_server_set_epoch_cnt(int cnt) {
     epoch_cnt = cnt;
 }
 
