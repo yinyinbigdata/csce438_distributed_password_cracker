@@ -40,8 +40,8 @@ typedef struct lsp_client_s {
     struct sockaddr_in lc_client_addr;
     struct sockaddr_in lc_server_addr;
     uint32_t lc_connid;
-    uint32_t lc_seqnum;
-    uint32_t lc_ack_seqnum;
+    uint32_t lc_client_seqnum;
+    uint32_t lc_server_seqnum;
     uint8_t lc_last_buf[MAXDATASIZE];
     int lc_last_buf_len;
     int lc_epoch_pass_num;
@@ -72,8 +72,8 @@ bool lsp_client_close(lsp_client* a_client);
 struct lsp_conn_desc {
     struct list_head lcd_list;
     uint32_t lcd_connid;
-    uint32_t lcd_seqnum;
-    uint32_t lcd_ack_seqnum;
+    uint32_t lcd_server_seqnum;
+    uint32_t lcd_client_seqnum;
     struct sockaddr_in lcd_client_addr;
     int32_t lcd_epoch_pass_num;
     int32_t lcd_epoch_recv_flag; // 1 mean receive, 0 not receive
@@ -102,6 +102,7 @@ bool lsp_server_write(lsp_server* a_srv, void* pld, int lth, uint32_t conn_id);
 // Close connection.
 bool lsp_server_close(lsp_server* a_srv, uint32_t conn_id);
 
+void lsp_msg_ack(LSPMessage* data_msg, uint32_t socket, const struct sockaddr_in* addr);
 
 // Setting LSP Parameters
 
@@ -113,5 +114,11 @@ void lsp_set_epoch_cnt(int cnt);
 
 // Set fraction of packets that get dropped along each connection
 void lsp_set_drop_rate(double rate);
+
+ssize_t sendto_maydrop(int sockfd, const void *buf, size_t len, int flags,
+               const struct sockaddr *dest_addr, socklen_t addrlen, bool drop);
+
+ssize_t recvfrom_maydrop(int sockfd, void *buf, size_t len, int flags,
+                struct sockaddr *src_addr, socklen_t *addrlen, bool drop);
 
 #endif

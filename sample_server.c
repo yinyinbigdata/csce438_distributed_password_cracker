@@ -8,6 +8,8 @@ int main(int argc, char* argv[]) {
     uint32_t returned_id;
     int bytes_read;
     
+    double r = 0.5;
+    lsp_set_drop_rate(r);
     for(;;) {
         // wait for echo client to send something
         int bytes = lsp_server_read(myserver, payload, &returned_id);
@@ -15,8 +17,9 @@ int main(int argc, char* argv[]) {
         if (bytes == 0) {
             continue;
         }
-        
-        // Echo it right back
+
+
+        //Echo it right back
         lsp_server_write(myserver, payload, bytes, returned_id);
     }
 }

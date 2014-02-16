@@ -13,6 +13,8 @@ struct itimerval timer_server;
 
 void lsp_server_resend_lastmsgbuf(lsp_server* a_srv, struct lsp_conn_desc* conn);
 
+bool lsp_should_drop();
+
 static void server_sig_timer(int i) {
     DEBUG("server_sig_timer:");
     struct lsp_conn_desc* conn;
@@ -26,7 +28,7 @@ static void server_sig_timer(int i) {
         DEBUG("server_sig_timer: connid %d epoch_pass_num %d", conn->lcd_connid, conn->lcd_epoch_pass_num);
         // time out
         if (conn->lcd_epoch_pass_num > epoch_cnt) {
-            DEBUG("server_sig_timer: epoch pass num > epoch_cnt, resend");
+            DEBUG("server_sig_timer: epoch pass num > epoch_cnt, resend, seqnum %d", conn->lcd_server_seqnum);
             lsp_server_resend_lastmsgbuf(global_server, conn);
             conn->lcd_epoch_pass_num = 0;
         }
@@ -49,6 +51,7 @@ void lsp_server_set_epoch_cnt(int cnt) {
 }
 
 bool lsp_server_store_lastmsgbuf(struct lsp_conn_desc* conn, uint8_t* buf, int len) {
+    DEBUG("lsp_server_store_lastmsgbuf: len %d", len);
     memcpy(conn->lcd_last_buf, buf, len);
     conn->lcd_last_buf_len = len;
 }
@@ -62,7 +65,8 @@ void lsp_server_resend_lastmsgbuf(lsp_server* a_srv, struct lsp_conn_desc* conn)
     buf = conn->lcd_last_buf;
     len = conn->lcd_last_buf_len;
     
-    ret = sendto(a_srv->ls_socket, buf, len, 0, (struct sockaddr*)&conn->lcd_client_addr, addr_len);
+    DEBUG("lsp_server_resend_lastmsgbuf: len %d", len);
+    ret = sendto_maydrop(a_srv->ls_socket, buf, len, 0, (struct sockaddr*)&conn->lcd_client_addr, addr_len, false);
     if (ret < 0) {
         DEBUG("lsp_server_resend_lastmsgbuf: sendto failed");
     }
@@ -95,6 +99,10 @@ lsp_server* lsp_server_create(int port) {
     server_addr->sin_addr.s_addr = htonl(INADDR_ANY);
     server_addr->sin_port = htons(LSPPORT);
     
+    // set SO_REUSEADDR so that we can re-use not fully deallocated chatrooms
+	int optval = 1;
+	setsockopt(server->ls_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof optval);
+    
     if (bind(server->ls_socket, (struct sockaddr*)server_addr, addr_len) < 0) {
         PRINTF("lsp_server_create: bind failed");
         free(server); 
@@ -102,12 +110,12 @@ lsp_server* lsp_server_create(int port) {
     }
     
     // set server sig timer
-    DEBUG("lsp_server_create: set sig timer");
-    memset(&timer_server, 0, sizeof(struct itimerval));
-    timer_server.it_interval.tv_sec = epoch_lth;
-    timer_server.it_value.tv_sec = epoch_lth;
-    signal(SIGALRM, server_sig_timer);
-    setitimer(ITIMER_REAL, &timer_server, NULL);
+    // DEBUG("lsp_server_create: set sig timer");
+    // memset(&timer_server, 0, sizeof(struct itimerval));
+    // timer_server.it_interval.tv_sec = epoch_lth;
+    // timer_server.it_value.tv_sec = epoch_lth;
+    // signal(SIGALRM, server_sig_timer);
+    // setitimer(ITIMER_REAL, &timer_server, NULL);
     
     global_server = server;
     
@@ -128,7 +136,6 @@ struct lsp_conn_desc* find_conn_desc(lsp_server* a_srv, uint32_t conn_id) {
     return NULL;
 }
 
-
 // return new conn_id
 uint32_t add_conn_desc(lsp_server* a_srv, struct sockaddr_in* client_addr) {
     struct lsp_conn_desc* conn;
@@ -138,7 +145,8 @@ uint32_t add_conn_desc(lsp_server* a_srv, struct sockaddr_in* client_addr) {
     
     conn->lcd_client_addr = *client_addr;
     LOCK(&a_srv->ls_lock);
-    connid = a_srv->ls_lcd_maxid++;
+    a_srv->ls_lcd_maxid++;
+    connid = a_srv->ls_lcd_maxid;
     conn->lcd_connid = connid;
     list_add_tail(&a_srv->ls_lcd_list, &conn->lcd_list);
     UNLOCK(&a_srv->ls_lock);
@@ -160,23 +168,6 @@ bool remove_conn_desc(lsp_server* a_srv, uint32_t connid) {
     return false;
 }
 
-void lsp_server_conn_ack(lsp_server* a_srv, struct sockaddr_in* client_addr, uint32_t connid) {
-    LSPMessage msg = LSPMESSAGE__INIT;
-    int len;
-    uint8_t* buf;
-    
-    msg.connid = connid;
-    msg.seqnum = 0;
-    msg.payload.len = 0;
-    
-    len = lspmessage__get_packed_size(&msg);
-    buf = malloc(len);
-    lspmessage__pack(&msg, buf);
-    
-    sendto(a_srv->ls_socket, buf, len, 0, (struct sockaddr*)client_addr, sizeof(struct sockaddr));
-    free(buf);
-}
-
 // Read from connection. Return NULL when connection lost
 // Returns number of bytes read. coon_id is an output parameter
 int lsp_server_read(lsp_server* a_srv, void* pld, uint32_t* conn_id) {
@@ -189,9 +180,10 @@ int lsp_server_read(lsp_server* a_srv, void* pld, uint32_t* conn_id) {
     uint32_t new_conn_id;
     uint32_t seqnum;
     struct lsp_conn_desc* conn = NULL;
-    
+
+recv_again:    
     DEBUG("lsp_server_read: begin recvfrom");
-    ret = recvfrom(a_srv->ls_socket, buf, MAXDATASIZE, 0, (struct sockaddr *)&client_addr, &addr_len);
+    ret = recvfrom_maydrop(a_srv->ls_socket, buf, MAXDATASIZE, 0, (struct sockaddr *)&client_addr, &addr_len, true);
     DEBUG("lsp_server_read: read packet");
     if (ret == -1) {
         PRINTF("lsp_server_read: recvfrom get -1\n");
@@ -203,15 +195,18 @@ int lsp_server_read(lsp_server* a_srv, void* pld, uint32_t* conn_id) {
     *conn_id = msg->connid;
     seqnum = msg->seqnum;
     memcpy(pld, msg->payload.data, len);
-    lspmessage__free_unpacked(msg, NULL);
     
-    DEBUG("lsp_server_read: connid %d seqnum %d len", msg->connid, seqnum, len);
+    
+    DEBUG("lsp_server_read: read msg:");
+    dump_msg(msg);
     // add new conn
     if (msg->connid == 0 && seqnum == 0 && len == 0) {
         DEBUG("lsp_server_read: new conn");
         new_conn_id = add_conn_desc(a_srv, &client_addr);
-        lsp_server_conn_ack(a_srv, &client_addr, new_conn_id);
+        msg->connid = new_conn_id;
+        lsp_msg_ack(msg, a_srv->ls_socket, &client_addr);
         goto out;
+        //goto recv_again;
     }
     
     DEBUG("lsp_server_read: connid %d seqnum %d buf %s\n", msg->connid, msg->seqnum, pld);
@@ -222,28 +217,23 @@ int lsp_server_read(lsp_server* a_srv, void* pld, uint32_t* conn_id) {
         goto out;
     }
     
-    // check seqnum    
-    if (seqnum == conn->lcd_seqnum + 1 && conn->lcd_seqnum == conn->lcd_ack_seqnum) {
-        // receive new packet
-        conn->lcd_seqnum = seqnum;
-        //conn->lcd_ack_seqnum = seqnum;
-        DEBUG("lsp_server_read: receive new packet, msg seqnum %d\n", msg->seqnum);
-    } else if (seqnum < conn->lcd_seqnum) {
-        // receive old packet
-        DEBUG("lsp_server_read: receive old packet, msg seqnum %d, conn seqnum %d, conn ack_seqnum %d\n", 
-                msg->seqnum, conn->lcd_seqnum, conn->lcd_ack_seqnum);
-    } else if (seqnum > conn->lcd_seqnum + 1) {
-        // receive future packet
-        DEBUG("lsp_server_read: receive future packet, msg seqnum %d, conn seqnum %d, conn ack_seqnum %d\n", 
-                msg->seqnum, conn->lcd_seqnum, conn->lcd_ack_seqnum);
+    // check seqnum
+    DEBUG("lsp_server_read: check seqnum, dump msg");
+    dump_msg(msg);
+    if (seqnum == conn->lcd_client_seqnum + 1) {
+        DEBUG("lsp_server_read: recv client data, seqnum %d", seqnum);
+        DEBUG("lsp_server_read: send ack");
+        conn->lcd_client_seqnum = seqnum;
+        lsp_msg_ack(msg, a_srv->ls_socket, &conn->lcd_client_addr);
     } else {
-        // other unkown
-        DEBUG("lsp_server_read: ack other unkown, msg seqnum %d, conn seqnum %d, conn ack_seqnum %d\n", 
-                msg->seqnum, conn->lcd_seqnum, conn->lcd_ack_seqnum);
+        DEBUG("lsp_server_read: wrong data, msg seqnum %d, lcd_client_seqnum %d", seqnum, conn->lcd_client_seqnum);
+        goto recv_again;
     }
-    
+        
     // update epoch pass
     conn->lcd_epoch_recv_flag = 1;
+    
+    //lspmessage__free_unpacked(msg, NULL);
 
 out:
     return len;
@@ -252,9 +242,14 @@ out:
 // Server Write. Should not send NULL
 bool lsp_server_write(lsp_server* a_srv, void* pld, int lth, uint32_t conn_id) {
     struct lsp_conn_desc* conn;
-    uint8_t* buf;
-    LSPMessage msg = LSPMESSAGE__INIT;
-    int len;
+    uint8_t* req_buf = NULL;
+    int req_len, req_ret;
+    LSPMessage req_msg = LSPMESSAGE__INIT;
+    uint8_t ack_buf[MAXDATASIZE];
+    int ack_len, ack_ret;
+    LSPMessage* ack_msg;
+    struct sockaddr_in client_addr;
+    int addr_len = sizeof(struct sockaddr_in);
     
     conn = find_conn_desc(a_srv, conn_id);
     if (conn == NULL) {
@@ -262,29 +257,59 @@ bool lsp_server_write(lsp_server* a_srv, void* pld, int lth, uint32_t conn_id) {
         return false;
     }
     
-    //conn->lcd_seqnum++;
-    conn->lcd_ack_seqnum++;
-    msg.connid = conn->lcd_connid;
-    msg.seqnum = conn->lcd_seqnum;
-    msg.payload.data = malloc(sizeof(uint8_t) * lth);
-    if (msg.payload.data == NULL) {
+    req_msg.connid = conn->lcd_connid;
+    conn->lcd_server_seqnum++;
+    req_msg.seqnum = conn->lcd_server_seqnum;
+    req_msg.payload.data = malloc(sizeof(uint8_t) * lth);
+    if (req_msg.payload.data == NULL) {
         PRINTF("lsp_server_write: malloc payload failed\n");
         return false;
     }
-    msg.payload.len = lth;
-    memcpy(msg.payload.data, pld, lth * sizeof(uint8_t));
+    req_msg.payload.len = lth;
+    memcpy(req_msg.payload.data, pld, lth * sizeof(uint8_t));
     
-    len = lspmessage__get_packed_size(&msg);
-    buf = malloc(len);
-    if (buf == NULL) {
+    req_len = lspmessage__get_packed_size(&req_msg);
+    req_buf = malloc(req_len);
+    if (req_buf == NULL) {
         PRINTF("lsp_server_write: malloc buf failed\n");
         return false;
     }
-    lspmessage__pack(&msg, buf);
+    lspmessage__pack(&req_msg, req_buf);
     
-    DEBUG("lsp_server_write: send msg connid %d seqnum %d buf: %s\n", msg.connid, msg.seqnum, pld);
-    lsp_server_store_lastmsgbuf(conn, buf, len);
-    sendto(a_srv->ls_socket, buf, len, 0, (struct sockaddr*)&conn->lcd_client_addr, sizeof(struct sockaddr));
+    if (req_len == 0) {
+        DEBUG("lsp_server_write: should not write null");
+    }
+    
+    DEBUG("lsp_server_write: send msg connid %d seqnum %d buf: %s ;len %d\n", req_msg.connid, req_msg.seqnum, pld, req_len);
+    lsp_server_store_lastmsgbuf(conn, req_buf, req_len);
+    req_ret = sendto_maydrop(a_srv->ls_socket, req_buf, req_len, 0, (struct sockaddr*)&conn->lcd_client_addr, sizeof(struct sockaddr), true);
+    if (req_ret != req_len) {
+        DEBUG("lsp_server_write: send size mismatch req_len %d, req_ret %d", req_len, req_ret);
+    }
+    free(req_buf);
+    
+recv_ack:
+    ack_ret = recvfrom_maydrop(a_srv->ls_socket, ack_buf, 4096, 0, (struct sockaddr *)&client_addr, &addr_len, false);
+    if (ack_ret == -1) {
+        DEBUG("lsp_server_create: receive init ack msg failed\n");
+    }
+    ack_msg = lspmessage__unpack(NULL, ack_ret, ack_buf);
+    
+    if (ack_msg->connid != conn->lcd_connid) {
+        DEBUG("lsp_server_write: bug!!! connid mismatch");
+    }
+
+    if (ack_msg->seqnum == conn->lcd_server_seqnum && 
+        ack_msg->connid == conn->lcd_connid &&
+        ack_msg->payload.len == 0) {
+        DEBUG("lsp_server_write: seqnum %d recv ack", conn->lcd_server_seqnum);
+    } else {
+        DEBUG("lsp_server_write: wrong ack, send seqnum %d, recv %d", conn->lcd_server_seqnum, ack_msg->seqnum);
+        dump_msg(ack_msg);
+        DEBUG("lsp_server_write: try again");
+        memset(ack_buf, 0, MAXDATASIZE);
+        goto recv_ack;
+    }
     
     return true;
 }
@@ -293,11 +318,5 @@ bool lsp_server_write(lsp_server* a_srv, void* pld, int lth, uint32_t conn_id) {
 bool lsp_server_close(lsp_server* a_srv, uint32_t conn_id) {
     remove_conn_desc(a_srv, conn_id);
 }
-
-
-
-
-// Set fraction of packets that get dropped along each connection
-void lsp_set_drop_rate(double rate);
 
 #endif
