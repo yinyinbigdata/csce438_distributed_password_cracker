@@ -101,7 +101,8 @@ lsp_server* lsp_server_create(int port) {
     
     // set SO_REUSEADDR so that we can re-use not fully deallocated chatrooms
 	int optval = 1;
-	setsockopt(server->ls_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof optval);
+	setsockopt(server->ls_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+    //setsockopt(serverFD, SOL_SOCKET, SO_REUSEADDR | SO_BROADCAST, (void*)true, sizeof(int));
     
     if (bind(server->ls_socket, (struct sockaddr*)server_addr, addr_len) < 0) {
         PRINTF("lsp_server_create: bind failed");
@@ -148,7 +149,9 @@ uint32_t add_conn_desc(lsp_server* a_srv, struct sockaddr_in* client_addr) {
     a_srv->ls_lcd_maxid++;
     connid = a_srv->ls_lcd_maxid;
     conn->lcd_connid = connid;
-    list_add_tail(&a_srv->ls_lcd_list, &conn->lcd_list);
+    list_add_tail(&conn->lcd_list, &a_srv->ls_lcd_list);
+    DEBUG("add_conn_desc: add new conn %d", conn->lcd_connid);
+        
     UNLOCK(&a_srv->ls_lock);
     return connid;
 }
