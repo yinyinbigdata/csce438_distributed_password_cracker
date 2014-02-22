@@ -44,6 +44,7 @@ typedef struct lsp_client_s {
     uint32_t lc_server_seqnum;
     uint8_t lc_last_buf[MAXDATASIZE];
     int lc_last_buf_len;
+    int lc_is_last_msg_ack;
     int lc_epoch_pass_num;
     int lc_epoch_recv_flag;
 } lsp_client;
@@ -79,6 +80,7 @@ struct lsp_conn_desc {
     int32_t lcd_epoch_recv_flag; // 1 mean receive, 0 not receive
     uint8_t lcd_last_buf[MAXDATASIZE];
     int lcd_last_buf_len;
+    int lcd_is_last_msg_ack;
 };
 
 typedef struct lsp_server_s {
@@ -102,7 +104,16 @@ bool lsp_server_write(lsp_server* a_srv, void* pld, int lth, uint32_t conn_id);
 // Close connection.
 bool lsp_server_close(lsp_server* a_srv, uint32_t conn_id);
 
+// send a ack according to the data_msg
 void lsp_msg_ack(LSPMessage* data_msg, uint32_t socket, const struct sockaddr_in* addr);
+void lsp_ack(uint32_t connid, uint32_t seqnum, uint32_t socket, const struct sockaddr_in* addr);
+
+enum msg_type {
+    CONN_REQ = 0,
+    CONN_ACK,
+    DATA_SEND,
+    DATA_ACK
+};
 
 // Setting LSP Parameters
 
