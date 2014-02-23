@@ -119,7 +119,7 @@ lsp_server* lsp_server_create(int port) {
     memset(server_addr, 0, addr_len);
     server_addr->sin_family = AF_INET;
     server_addr->sin_addr.s_addr = htonl(INADDR_ANY);
-    server_addr->sin_port = htons(LSPPORT);
+    server_addr->sin_port = htons(port);
     
     // set SO_REUSEADDR so that we can re-use not fully deallocated chatrooms
 	int optval = 1;

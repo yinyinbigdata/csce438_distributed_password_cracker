@@ -114,7 +114,7 @@ lsp_client* lsp_client_create(const char* dest, int port) {
     server_addr = &client->lc_server_addr;
     memset(server_addr, 0, sizeof(struct sockaddr));
     server_addr->sin_family = AF_INET;
-    server_addr->sin_port = htons(LSPPORT);
+    server_addr->sin_port = htons(port);
     server_addr->sin_addr.s_addr = inet_addr(dest);
     
     // send init msg
