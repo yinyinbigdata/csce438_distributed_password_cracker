@@ -262,7 +262,7 @@ bool lsp_client_write(lsp_client* a_client, uint8_t* pld, int lth) {
     LSPMessage* ack_msg;
     int addr_len = sizeof(struct sockaddr);
     enum msg_type msg_type;
-    int retry;
+    int retry = 0;
     
     DEBUG("\n");
     DEBUG("lsp_client_write:###################");
