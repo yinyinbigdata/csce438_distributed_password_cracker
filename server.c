@@ -192,26 +192,32 @@ void request_add(server* srv, char* payload, int len, int req_connid) {
 
 void handle_join_req(server* srv, char* payload, int len, int client_connid) {
     // worker join
+    DEBUG("handle_join_req: add a worker, %d", client_connid);
     worker_add(srv, client_connid);
 }
 
 uint32_t pass_char2num(char* pass, int len) {
     uint32_t ret, i;
+    ret = 0;
     for ( i = 0; i < len; i++) {
-        ret = pass[i] - 'a' + 1;
+        ret += pass[i] - 'a';
         ret *= 26;
     }
     ret /= 26;
+    DEBUG("pass_char2num: pass %s, ret %d", pass, ret);
     return ret;
 }
 
-void pass_num2char(int num, char* pass, int len) {
+void pass_num2char(uint32_t num, char* pass, int len) {
     int i;
-    memset(pass, 0, len + 1);
+    memset(pass, 'a', len + 1);
+    pass[len] = '\0';
     for (i = len - 1; i >= 0; i--) {
-        pass[i] = (char)(num % 26 + 'a' - 1);
+        pass[i] = 'a' + num % 26;
         num /= 26;
+        //DEBUG("pass_num2char: num %d , pass %s, i %d", num, pass, i);
     }
+    DEBUG("pass_num2char: num %d, pass %s", num, pass);
 }
 
 
@@ -221,6 +227,7 @@ void handle_crack_req(server* srv, char* payload, int len, int client_connid) {
     request* req;
     
     // init req: add req to srv->srv_req_input_list
+    DEBUG("handle_crack_req: add req %s ", payload);
     req = request_create(client_connid, payload, len);
     LOCK(&srv->srv_lock);
     list_add_tail(&req->req_entry, &srv->srv_req_input_list);
@@ -332,7 +339,7 @@ void assign_one_req(server* srv, request* req, int worker_maxnum) {
     list_for_each_entry(w, &srv->srv_worker_list, wk_entry) {
         // wk_status 0: idle
         LOCK(&w->wk_lock);
-        if (w->wk_status = 0) {
+        if (w->wk_status == 0) {
             w->wk_req = req;
             list_add_tail(&w->wk_req_entry, &req->req_worker_list);
             w->wk_status = 1;
@@ -373,15 +380,17 @@ void assign_one_req(server* srv, request* req, int worker_maxnum) {
         return;
     }
     
-    lower_num = pass_char2num(lower,strlen(lower));
+    lower_num = pass_char2num(lower, strlen(lower));
     upper_num = pass_char2num(upper, strlen(upper));
     pass_total_num = upper_num - lower_num;
     pass_per_worker_num = pass_total_num / worker_count;
+    DEBUG("assign_one_req: lower_num %d, upper_num %d, pass_per_worker_num: %d", lower_num, upper_num, pass_per_worker_num);
     
     // send job.
     char* sub_lower;
     char* sub_upper;
     uint32_t sub_lower_num, sub_upper_num;
+    char* space = " ";
     
     sub_lower = (char*)malloc(len + 1);
     sub_upper = (char*)malloc(len + 1);
@@ -391,25 +400,32 @@ void assign_one_req(server* srv, request* req, int worker_maxnum) {
     list_for_each_entry(w, &req->req_worker_list, wk_req_entry) {
         // get upper
         sub_upper_num = sub_lower_num + pass_per_worker_num;
+        DEBUG("assign_one_req: sub_upper_num %d", sub_upper_num);
         pass_num2char(sub_upper_num, sub_upper, len);
         // gen worker crack req
         int offset = 0;
-        sprintf(w->wk_crack_req + offset, "%c ", 'c');
+        sprintf(w->wk_crack_req + offset, "c ", 2);
         offset += 2;
         sprintf(w->wk_crack_req + offset, hash, strlen(hash));
         offset += strlen(hash);
+        sprintf(w->wk_crack_req + offset, space, 1);
+        offset += 1;
         sprintf(w->wk_crack_req + offset, sub_lower, len);
         offset += len;
+        sprintf(w->wk_crack_req + offset, space, 1);
+        offset += 1;
         sprintf(w->wk_crack_req + offset, sub_upper, len);
         offset += len;
         w->wk_crack_req[offset] = '\0';
         
         DEBUG("handle_crack_req: worker %d crack req %s", w->wk_connid, w->wk_crack_req);
-        sub_lower_num = sub_upper_num;
+        
         
         // send crack req to worker
         DEBUG("handle_cracke_req: send work %d crack msg %s", w->wk_connid, w->wk_crack_req);
         lsp_server_write(srv->srv_lsp_server, w->wk_crack_req, strlen(w->wk_crack_req), w->wk_connid);
+        
+        sub_lower_num = sub_upper_num + 1;
     }
     
     free(sub_lower);
