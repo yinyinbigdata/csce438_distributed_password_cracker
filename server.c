@@ -210,6 +210,9 @@ uint32_t pass_char2num(char* pass, int len) {
 
 void pass_num2char(uint32_t num, char* pass, int len) {
     int i;
+    uint32_t num_bak;
+    
+    num_bak = num;
     memset(pass, 'a', len + 1);
     pass[len] = '\0';
     for (i = len - 1; i >= 0; i--) {
@@ -217,7 +220,7 @@ void pass_num2char(uint32_t num, char* pass, int len) {
         num /= 26;
         //DEBUG("pass_num2char: num %d , pass %s, i %d", num, pass, i);
     }
-    DEBUG("pass_num2char: num %d, pass %s", num, pass);
+    DEBUG("pass_num2char: num %d, pass %s", num_bak, pass);
 }
 
 
@@ -394,15 +397,16 @@ void assign_one_req(server* srv, request* req, int worker_maxnum) {
     
     sub_lower = (char*)malloc(len + 1);
     sub_upper = (char*)malloc(len + 1);
-    memcpy(sub_lower, lower, len + 1);
-    sub_lower_num = pass_char2num(sub_lower, len);
+    sub_lower_num = lower_num;
     
     list_for_each_entry(w, &req->req_worker_list, wk_req_entry) {
-        // get upper
+        // get sub_lower and sub_upper
         sub_upper_num = sub_lower_num + pass_per_worker_num;
         DEBUG("assign_one_req: sub_upper_num %d", sub_upper_num);
+        pass_num2char(sub_lower_num, sub_lower, len);
         pass_num2char(sub_upper_num, sub_upper, len);
         // gen worker crack req
+        memset(w->wk_crack_req, 0, sizeof(w->wk_crack_req));
         int offset = 0;
         sprintf(w->wk_crack_req + offset, "c ", 2);
         offset += 2;
@@ -416,7 +420,7 @@ void assign_one_req(server* srv, request* req, int worker_maxnum) {
         offset += 1;
         sprintf(w->wk_crack_req + offset, sub_upper, len);
         offset += len;
-        w->wk_crack_req[offset] = '\0';
+        // w->wk_crack_req[offset] = '\0';
         
         DEBUG("handle_crack_req: worker %d crack req %s", w->wk_connid, w->wk_crack_req);
         

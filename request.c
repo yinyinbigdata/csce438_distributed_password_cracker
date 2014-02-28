@@ -74,6 +74,7 @@ int main(int argc, char* argv[]) {
     
     lsp_client_write(req_client, req_msg, strlen(req_msg) + 1);
     
+    memset(ret_msg, 0, sizeof(ret_msg));
     ret_bytes = lsp_client_read(req_client, ret_msg);
     
     puts(ret_msg);

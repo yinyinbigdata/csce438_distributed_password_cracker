@@ -18,16 +18,22 @@ void send_join_request(lsp_client* client, const char* dest, int port) {
     lsp_client_write(client, join_msg, strlen(join_msg));
 }
 
-void pass_increment(char* p, int len) {
-    int i;
+char* pass_increment(char* p, int len) {
+    char temp[len];
     
-    for (i = len - 1; i >= 0; i++) {
-        if (p[i] == 'z') {
-            p[i] = 'a';
-            continue;
-        } else {
-            p[i] += 1;
-            break;
+    int i = len-1;
+    strcpy(temp,p);
+    // char *newstring = (char*)malloc(2);
+    char *newstring = (char*)malloc(len);
+    while(i>=0) {
+        if(temp[i]=='z') {
+                temp[i] = 'a';
+                i = i-1;
+        }
+        else {
+            temp[i]=temp[i]+1;
+            strcpy(newstring, temp);
+            return newstring;
         }
     }
 }
@@ -40,15 +46,27 @@ char* handle_crack_request(char* crack_req) {
     char* ret = NULL;
     int i;
     int len;
+    char* cur;
+    char* cur_prev;
     
+    DEBUG("handle_crack_request: %s", crack_req);
     strtok(crack_req, delim);
     hash = strtok(NULL, delim);
     lower = strtok(NULL, delim);
     upper = strtok(NULL, delim);
     len = strlen(lower);
     
+    DEBUG("handle_crack_request: hash %s, lower %s, upper %s, len %d",
+            hash, lower, upper, len);
+    
+    cur = (char*)malloc(len);
+    if (cur == NULL) {
+        DEBUG("handle_crack_request: malloc cur fail");
+    }
+    strcpy(cur, lower);
     for(;;) {
-        SHA1(lower, len, pass_hash);
+        DEBUG("handle_crack_request: sha1 on %s", cur);
+        SHA1(cur, len, pass_hash);
         
         for (i = 0; i < 20; i++) {
             sprintf(converted + 2 * i, "%02x", pass_hash[i]);
@@ -57,19 +75,25 @@ char* handle_crack_request(char* crack_req) {
         if (strcmp(converted, hash) == 0) {
             ret = (char*)malloc(len + 2);
             sprintf(ret, "f ", 2);
-            memcpy(ret + 2, lower, len);
+            memcpy(ret + 2, cur, len);
+            DEBUG("handle_crack_request: found password %s", cur);
             return ret;
         }
         
-        if (strcmp(lower, upper) == 0)
+        DEBUG("handle_crack_request: compare %s %s", cur, upper);
+        if (strcmp(cur, upper) == 0) {
             break;
-        pass_increment(lower, len);
+        }
+
+        cur_prev = cur;
+        cur = pass_increment(cur_prev, len);
+        free(cur_prev);
     }
     
     // "x": password not found
     ret = (char*)malloc(2);
     memset(ret, 0, 2);
-    ret[0] = 'x';
+    sprintf(ret, "x", 1);
     return ret;
 }
 
@@ -116,7 +140,9 @@ int main(int argc, char* argv[]) {
     
     // 2. do work loop
     for (;;) {
+        memset(buffer, 0, sizeof(buffer));
         bytes_read = lsp_client_read(wk_client, buffer);
+        DEBUG("worker: recv %s", buffer);
         
         if (bytes_read == 0)
             continue;
@@ -127,6 +153,7 @@ int main(int argc, char* argv[]) {
             DEBUG("worker: not crack req. recv %s", buffer);
             continue;
         }
+        DEBUG("work: begin to crack");
         ret = handle_crack_request(buffer);
         lsp_client_write(wk_client, ret, strlen(ret));
         free(ret);
