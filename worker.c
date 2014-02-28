@@ -38,11 +38,26 @@ char* pass_increment(char* p, int len) {
     }
 }
 
+int shaTest(char* input, int len, char* pass) {
+	int i = 0;
+    //note: must use unsigned char
+	unsigned char temp[SHA_DIGEST_LENGTH];
+	char buf[SHA_DIGEST_LENGTH*2];
+
+	memset(buf, 0x0, SHA_DIGEST_LENGTH*2);
+	memset(temp, 0x0, SHA_DIGEST_LENGTH);
+
+	SHA1((unsigned char *)input, len, temp);
+
+	for (i=0; i < SHA_DIGEST_LENGTH; i++) {
+		sprintf((char*)&(buf[i*2]), "%02x", temp[i]);
+	}
+	return strcmp(buf,pass)==0;
+}
+
 char* handle_crack_request(char* crack_req) {
     char* hash, * lower, * upper;
     char* delim = " ";
-    char pass_hash[SHA_DIGEST_LENGTH];
-    char converted[21];
     char* ret = NULL;
     int i;
     int len;
@@ -66,13 +81,7 @@ char* handle_crack_request(char* crack_req) {
     strcpy(cur, lower);
     for(;;) {
         DEBUG("handle_crack_request: sha1 on %s", cur);
-        SHA1(cur, len, pass_hash);
-        
-        for (i = 0; i < 20; i++) {
-            sprintf(converted + 2 * i, "%02x", pass_hash[i]);
-        }
-        
-        if (strcmp(converted, hash) == 0) {
+        if (shaTest(cur, len, hash)) {
             ret = (char*)malloc(len + 2);
             sprintf(ret, "f ", 2);
             memcpy(ret + 2, cur, len);
