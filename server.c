@@ -278,6 +278,7 @@ void handle_pass_found(server* srv, char* payload, int len, int client_connid) {
     char* delim = " ";
     request* req;
     
+    DEBUG("handle_pass_found: %s", payload);
     w = worker_found(srv, client_connid);
     
     LOCK(&w->wk_lock);
@@ -475,6 +476,7 @@ int main(int argc, char* argv[]) {
     
     while (1) {
         DEBUG("server: read dpc msg");
+        memset(payload, 0, sizeof(payload));
         read_bytes = lsp_server_read(lsp_srv, payload, &client_connid);
         
         // new connid.

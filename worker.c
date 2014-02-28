@@ -86,6 +86,7 @@ char* handle_crack_request(char* crack_req) {
             sprintf(ret, "f ", 2);
             memcpy(ret + 2, cur, len);
             DEBUG("handle_crack_request: found password %s", cur);
+            DEBUG("handle_crack_request: send %s", ret);
             return ret;
         }
         
